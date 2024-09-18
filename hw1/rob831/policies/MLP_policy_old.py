@@ -11,7 +11,7 @@ from torch import distributions
 
 from rob831.infrastructure import pytorch_util as ptu
 from rob831.policies.base_policy import BasePolicy
-
+import pdb
 
 class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
 
@@ -59,7 +59,7 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
             )
             self.mean_net.to(ptu.device)
             self.logstd = nn.Parameter(
-                torch.zeros(self.ac_dim, dtype=torch.float32).to(ptu.device)
+                torch.zeros(self.ac_dim, dtype=torch.float32, device=ptu.device)
             )
             self.logstd.to(ptu.device)
             self.optimizer = optim.Adam(
@@ -81,21 +81,47 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
             observation = obs[None]
 
         # TODO return the action that the policy prescribes
-        # raise NotImplementedError
-        # observation = ptu.from_numpy(observation)
-        # action = self(observation)
+        observation = ptu.from_numpy(observation) # Convert to torch tensor
 
-        observation = ptu.from_numpy(observation)
-        action_distribution = self.forward(observation)
-        # action = action_distribution.sample()
+        # Forward pass to get the action
+        if self.discrete:
+            logits = self.logits_na(observation)
+            action_distribution = distributions.Categorical(logits=logits)
+            action = action_distribution.sample()
+        else:
+            mean = self.mean_net(observation)
+            std = torch.exp(self.logstd)
+            action_distribution = distributions.Normal(mean, std)
+            action = action_distribution.sample()
 
-        return ptu.to_numpy(action_distribution)
-
-
+        return ptu.to_numpy(action)
 
     # update/train this policy
     def update(self, observations, actions, **kwargs):
-        raise NotImplementedError
+        #TODO
+        # Convert observations and actions to torch tensors
+        observations = ptu.from_numpy(observations)
+        actions = ptu.from_numpy(actions)
+
+        # Forward pass to predict actions
+        if self.discrete:
+            logits = self.logits_na(observations)
+            action_distribution = distributions.Categorical(logits=logits)
+            predicted_actions = action_distribution.logits
+        else:
+            predicted_actions = self.mean_net(observations)
+
+        # Compute loss (MSE between predicted actions and true actions)
+        loss = self.loss(predicted_actions, actions)
+
+        # Backpropagation and optimization
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        return {
+            'Training Loss': ptu.to_numpy(loss),
+        }
 
     # This function defines the forward pass of the network.
     # You can return anything you want, but you should be able to differentiate
@@ -103,16 +129,14 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
     # return more flexible objects, such as a
     # `torch.distributions.Distribution` object. It's up to you!
     def forward(self, observation: torch.FloatTensor) -> Any:
-        # raise NotImplementedError
+        #TODO
         if self.discrete:
             logits = self.logits_na(observation)
-            action_distribution = distributions.Categorical(logits=logits).sample
+            return distributions.Categorical(logits=logits)
         else:
-            action_distribution = distributions.Normal(self.mean_net(observation), torch.exp(self.logstd)).rsample()
-        return action_distribution
-
-        
-
+            mean = self.mean_net(observation)
+            std = torch.exp(self.logstd)
+            return distributions.Normal(mean, std)
 
 
 #####################################################
@@ -128,38 +152,25 @@ class MLPPolicySL(MLPPolicy):
             adv_n=None, acs_labels_na=None, qvals=None
     ):
         # TODO: update the policy and return the loss
+        # Convert observations and actions to torch tensors and move to the correct device
+        observations = ptu.from_numpy(observations)
+        actions = ptu.from_numpy(actions)
 
-        # loss = TODO
-        mlp_output = self.forward(ptu.from_numpy(observations))
-        loss = self.loss(mlp_output, ptu.from_numpy(actions))
+        # Forward pass to get the predicted actions
+        if self.discrete:
+            logits = self.logits_na(observations)
+            action_distribution = distributions.Categorical(logits=logits)
+            predicted_actions = action_distribution.logits
+        else:
+            predicted_actions = self.mean_net(observations)
+
+        # Compute loss (MSE between predicted actions and true actions)
+        loss = self.loss(predicted_actions, actions)
+
+        # Perform backpropagation and optimization step
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
-        # # Convert observations and actions to torch tensors
-        # observations = ptu.from_numpy(observations)
-        # actions = ptu.from_numpy(actions)
-
-        # # Get action distribution
-        # action_distribution = self.forward(observations)
-
-        # # Compute loss
-        # if self.discrete:
-        #     # For discrete actions, use CrossEntropyLoss
-        #     logits = action_distribution.logits
-        #     loss = self.loss(logits, actions.long())
-        # else:
-        #     # For continuous actions, use MSELoss with mean
-        #     mean = action_distribution.mean
-        #     loss = self.loss(mean, actions)
-
-        # # Zero gradients
-        # self.optimizer.zero_grad()
-        # # Backpropagate
-        # loss.backward()
-        # # Update parameters
-        # self.optimizer.step()
-
 
         return {
             # You can add extra logging information here, but keep this line
