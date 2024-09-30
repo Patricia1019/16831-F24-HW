@@ -1,0 +1,1 @@
+For plotting the results, just put the series of plot_curve_q*.py in the root dir of the data dir and make a new images folder in the root dir, and run python command. The results would be stored in the images folder.
