@@ -147,9 +147,24 @@ class MLPPolicyPG(MLPPolicy):
         # HINT4: use self.optimizer to optimize the loss. Remember to
             # 'zero_grad' first
 
-        raise NotImplementedError
+        actions_distribution = self.forward(observations)
+        log_probs: torch.Tensor = actions_distribution.log_prob(actions)
+        if not self.discrete:
+            log_probs = log_probs.sum(1)
+        assert log_probs.size() == advantages.size()
+        loss = -(log_probs * advantages).sum()
 
-        if self.nn_baseline:
+        # TODO: optimize `loss` using `self.optimizer`
+        # HINT: remember to `zero_grad` first
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        train_log = {
+            'Training Loss': ptu.to_numpy(loss),
+        }
+
+        if self.nn_baseline and q_values is not None:
             ## TODO: update the neural network baseline using the q_values as
             ## targets. The q_values should first be normalized to have a mean
             ## of zero and a standard deviation of one.
@@ -158,11 +173,33 @@ class MLPPolicyPG(MLPPolicy):
                 ## updating the baseline. Remember to 'zero_grad' first
             ## HINT2: You will need to convert the targets into a tensor using
                 ## ptu.from_numpy before using it in the loss
-            raise NotImplementedError
+                
+            # normalize the q_values to have a mean of zero and a standard
+            # deviation of one
+            ## HINT: there is a `normalize` function in `infrastructure.utils`
+            targets = normalize(q_values, q_values.mean(), q_values.std())
+            targets = ptu.from_numpy(targets)
 
-        train_log = {
-            'Training Loss': ptu.to_numpy(policy_loss),
-        }
+            baseline_predictions: torch.Tensor = self.baseline(observations).squeeze()
+
+            ## avoid any subtle broadcasting bugs that can arise when dealing with arrays of shape
+            ## [ N ] versus shape [ N x 1 ]
+            ## HINT: you can use `squeeze` on torch tensors to remove dimensions of size 1
+            assert baseline_predictions.shape == targets.shape
+            
+            # TODO: compute the loss that should be optimized for training the
+            # baseline MLP (`self.baseline`)
+            # HINT: use `F.mse_loss`
+            baseline_loss = F.mse_loss(baseline_predictions, targets)
+
+            # TODO: optimize `baseline_loss` using `self.baseline_optimizer`
+            # HINT: remember to `zero_grad` first
+            self.baseline_optimizer.zero_grad()
+            baseline_loss.backward()
+            self.baseline_optimizer.step()
+
+            train_log['Baseline Loss'] = ptu.to_numpy(baseline_loss)
+
         return train_log
 
     def run_baseline_prediction(self, observations):
